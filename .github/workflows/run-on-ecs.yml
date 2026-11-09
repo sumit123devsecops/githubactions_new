@@ -1,0 +1,63 @@
+name: Run ECR image on ECS
+
+on:
+  workflow_dispatch:
+    inputs:
+      image_tag:
+        description: "Image tag in ECR to run"
+        required: true
+        default: "latest"
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-east-1
+  ECR_REPOSITORY: my-app
+  ECS_CLUSTER: my-cluster
+  CONTAINER_NAME: my-app
+  TASK_DEF_PATH: .aws/task-definition.json
+
+jobs:
+  run-on-ecs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Check image exists in ECR
+        env:
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: |
+          aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --image-ids imageTag="$IMAGE_TAG"
+
+      - name: Build image URI
+        id: image
+        env:
+          REGISTRY: ${{ steps.ecr.outputs.registry }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
+        run: echo "uri=${REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Render task definition
+        id: taskdef
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: ${{ env.TASK_DEF_PATH }}
+          container-name: ${{ env.CONTAINER_NAME }}
+          image: ${{ steps.image.outputs.uri }}
+
+      - name: Register task definition and run task
+        uses: aws-actions/amazon-ecs-deploy-task-definitio
